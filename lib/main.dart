@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:sensors_plus/sensors_plus.dart';
 import 'package:fl_chart/fl_chart.dart';
 import 'dart:async';
+import 'dart:math';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -83,9 +84,9 @@ class _AccelerometerPageState extends State<AccelerometerPage> {
         });
         
         // Log accelerometer data to terminal
-        // print('Accelerometer - X: ${event.x.toStringAsFixed(2)}, '
-        //       'Y: ${event.y.toStringAsFixed(2)}, '
-        //       'Z: ${event.z.toStringAsFixed(2)}');
+        print('Accelerometer - X: ${event.x.toStringAsFixed(2)}, '
+              'Y: ${event.y.toStringAsFixed(2)}, '
+              'Z: ${event.z.toStringAsFixed(2)}');
       },
       onError: (error) {
         print('Accelerometer error: $error');
@@ -93,19 +94,71 @@ class _AccelerometerPageState extends State<AccelerometerPage> {
     );
   }
 
-  Widget _buildChart(String title, List<FlSpot> data, Color color, ) {
+  // Calculate dynamic Y-axis range for better visibility of small fluctuations
+  Map<String, double> _calculateYAxisRange(List<FlSpot> data) {
+    if (data.isEmpty) {
+      return {'min': -10.0, 'max': 10.0};
+    }
+
+    double minValue = data.map((spot) => spot.y).reduce(min);
+    double maxValue = data.map((spot) => spot.y).reduce(max);
+    
+    // Calculate the range
+    double range = maxValue - minValue;
+    
+    // Add 25% padding above and below for better visualization
+    double padding = range * 0.25;
+    
+    // Ensure minimum range for very stable readings (minimum 0.5 units)
+    if (range < 0.5) {
+      padding = 0.25;
+    }
+    
+    // Ensure we don't have identical min/max values
+    if (minValue == maxValue) {
+      minValue -= 1.0;
+      maxValue += 1.0;
+    } else {
+      minValue -= padding;
+      maxValue += padding;
+    }
+
+    return {
+      'min': minValue,
+      'max': maxValue,
+    };
+  }
+
+  Widget _buildChart(String title, List<FlSpot> data, Color color) {
+    // Get dynamic Y-axis range for auto-scaling
+    Map<String, double> yRange = _calculateYAxisRange(data);
+    
     return Container(
-      height: 120,
+      height: 140, // Slightly increased height for better visibility
       padding: const EdgeInsets.all(8),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(
-            title,
-            style: const TextStyle(
-              fontSize: 14,
-              fontWeight: FontWeight.bold,
-            ),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text(
+                title,
+                style: const TextStyle(
+                  fontSize: 14,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+              // Show current Y-axis range
+              Text(
+                'Range: ${yRange['min']!.toStringAsFixed(1)} to ${yRange['max']!.toStringAsFixed(1)}',
+                style: TextStyle(
+                  fontSize: 10,
+                  color: Colors.grey[600],
+                  fontStyle: FontStyle.italic,
+                ),
+              ),
+            ],
           ),
           const SizedBox(height: 4),
           Expanded(
@@ -113,10 +166,47 @@ class _AccelerometerPageState extends State<AccelerometerPage> {
               LineChartData(
                 minX: data.isNotEmpty ? data.first.x : 0,
                 maxX: data.isNotEmpty ? data.last.x : 10,
-                minY: -20,
-                maxY: 20,
-                gridData: const FlGridData(show: false),
-                titlesData: const FlTitlesData(show: false),
+                minY: yRange['min']!,
+                maxY: yRange['max']!,
+                gridData: FlGridData(
+                  show: true,
+                  drawVerticalLine: false,
+                  horizontalInterval: (yRange['max']! - yRange['min']!) / 4,
+                  getDrawingHorizontalLine: (value) {
+                    return FlLine(
+                      color: Colors.grey.withOpacity(0.2),
+                      strokeWidth: 1,
+                    );
+                  },
+                ),
+                titlesData: FlTitlesData(
+                  show: true,
+                  rightTitles: const AxisTitles(
+                    sideTitles: SideTitles(showTitles: false),
+                  ),
+                  topTitles: const AxisTitles(
+                    sideTitles: SideTitles(showTitles: false),
+                  ),
+                  bottomTitles: const AxisTitles(
+                    sideTitles: SideTitles(showTitles: false),
+                  ),
+                  leftTitles: AxisTitles(
+                    sideTitles: SideTitles(
+                      showTitles: true,
+                      interval: (yRange['max']! - yRange['min']!) / 4,
+                      getTitlesWidget: (value, meta) {
+                        return Text(
+                          value.toStringAsFixed(1),
+                          style: TextStyle(
+                            color: Colors.grey[600],
+                            fontSize: 10,
+                          ),
+                        );
+                      },
+                      reservedSize: 35,
+                    ),
+                  ),
+                ),
                 borderData: FlBorderData(
                   show: true,
                   border: Border.all(color: Colors.grey.withOpacity(0.3)),
@@ -126,7 +216,7 @@ class _AccelerometerPageState extends State<AccelerometerPage> {
                     spots: data,
                     isCurved: true,
                     color: color,
-                    barWidth: 2,
+                    barWidth: 2.5, // Slightly thicker line for better visibility
                     isStrokeCapRound: true,
                     dotData: const FlDotData(show: false),
                     belowBarData: BarAreaData(
@@ -163,7 +253,7 @@ class _AccelerometerPageState extends State<AccelerometerPage> {
           ),
           const SizedBox(height: 8),
           Text(
-            value.toStringAsFixed(2),
+            value.toStringAsFixed(3), // Increased precision for small values
             style: const TextStyle(
               fontSize: 24,
               fontWeight: FontWeight.w600,
@@ -303,13 +393,33 @@ class _AccelerometerPageState extends State<AccelerometerPage> {
                   const SizedBox(height: 24),
                   
                   // Charts section
-                  const Text(
-                    'Real-time Strip Charts',
-                    style: TextStyle(
-                      fontSize: 18,
-                      fontWeight: FontWeight.bold,
-                      color: Colors.black87,
-                    ),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      const Text(
+                        'Auto-Scaling Strip Charts',
+                        style: TextStyle(
+                          fontSize: 18,
+                          fontWeight: FontWeight.bold,
+                          color: Colors.black87,
+                        ),
+                      ),
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                        decoration: BoxDecoration(
+                          color: Colors.green[100],
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: Text(
+                          'AUTO',
+                          style: TextStyle(
+                            fontSize: 10,
+                            fontWeight: FontWeight.bold,
+                            color: Colors.green[700],
+                          ),
+                        ),
+                      ),
+                    ],
                   ),
                   const SizedBox(height: 12),
                   
@@ -379,7 +489,7 @@ class _AccelerometerPageState extends State<AccelerometerPage> {
                     child: Column(
                       children: [
                         Icon(
-                          Icons.info_outline,
+                          Icons.auto_graph,
                           color: Colors.amber[700],
                           size: 28,
                         ),
@@ -394,11 +504,12 @@ class _AccelerometerPageState extends State<AccelerometerPage> {
                         ),
                         const SizedBox(height: 4),
                         Text(
-                          'Charts show the last $_maxDataPoints readings',
+                          'Charts auto-scale for optimal visibility of fluctuations',
                           style: TextStyle(
                             fontSize: 12,
                             color: Colors.amber[600],
                           ),
+                          textAlign: TextAlign.center,
                         ),
                       ],
                     ),
