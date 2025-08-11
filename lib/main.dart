@@ -93,7 +93,7 @@ class _AccelerometerPageState extends State<AccelerometerPage> {
     );
   }
 
-  Widget _buildChart(String title, List<FlSpot> data, Color color) {
+  Widget _buildChart(String title, List<FlSpot> data, Color color, ) {
     return Container(
       height: 120,
       padding: const EdgeInsets.all(8),
