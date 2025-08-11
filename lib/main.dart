@@ -1,65 +1,55 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:sensors_plus/sensors_plus.dart';
+import 'package:fl_chart/fl_chart.dart';
 import 'dart:async';
 
-void main() {
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  
+  // Lock orientation to portrait mode only
+  await SystemChrome.setPreferredOrientations([
+    DeviceOrientation.portraitUp,
+    DeviceOrientation.portraitDown,
+  ]);
   runApp(const MyApp());
 }
 
 class MyApp extends StatelessWidget {
   const MyApp({super.key});
 
-  // This widget is the root of your application.
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Flutter Demo',
+      title: 'Seismo Cardio App',
       theme: ThemeData(
-        // This is the theme of your application.
-        //
-        // TRY THIS: Try running your application with "flutter run". You'll see
-        // the application has a purple toolbar. Then, without quitting the app,
-        // try changing the seedColor in the colorScheme below to Colors.green
-        // and then invoke "hot reload" (save your changes or press the "hot
-        // reload" button in a Flutter-supported IDE, or press "r" if you used
-        // the command line to start the app).
-        //
-        // Notice that the counter didn't reset back to zero; the application
-        // state is not lost during the reload. To reset the state, use hot
-        // restart instead.
-        //
-        // This works for code too, not just values: Most code changes can be
-        // tested with just a hot reload.
-        colorScheme: ColorScheme.fromSeed(seedColor: Colors.deepPurple),
+        colorScheme: ColorScheme.fromSeed(seedColor: Colors.blue),
+        useMaterial3: true,
       ),
-      home: const MyHomePage(title: 'Flutter Demo Home Page'),
+      home: const AccelerometerPage(),
     );
   }
 }
 
-class MyHomePage extends StatefulWidget {
-  const MyHomePage({super.key, required this.title});
-
-  // This widget is the home page of your application. It is stateful, meaning
-  // that it has a State object (defined below) that contains fields that affect
-  // how it looks.
-
-  // This class is the configuration for the state. It holds the values (in this
-  // case the title) provided by the parent (in this case the App widget) and
-  // used by the build method of the State. Fields in a Widget subclass are
-  // always marked "final".
-
-  final String title;
+class AccelerometerPage extends StatefulWidget {
+  const AccelerometerPage({super.key});
 
   @override
-  State<MyHomePage> createState() => _MyHomePageState();
+  State<AccelerometerPage> createState() => _AccelerometerPageState();
 }
 
-class _MyHomePageState extends State<MyHomePage> {
-  int _counter = 0;
+class _AccelerometerPageState extends State<AccelerometerPage> {
   late StreamSubscription<AccelerometerEvent> _accelerometerSubscription;
-  AccelerometerEvent? _accelerometerEvent;
-
+  AccelerometerEvent? _currentEvent;
+  
+  // Data storage for graphs
+  final List<FlSpot> _xData = [];
+  final List<FlSpot> _yData = [];
+  final List<FlSpot> _zData = [];
+  
+  double _timeCounter = 0;
+  final int _maxDataPoints = 100; // Keep last 100 data points
+  
   @override
   void initState() {
     super.initState();
@@ -76,12 +66,26 @@ class _MyHomePageState extends State<MyHomePage> {
     _accelerometerSubscription = accelerometerEvents.listen(
       (AccelerometerEvent event) {
         setState(() {
-          _accelerometerEvent = event;
+          _currentEvent = event;
+          _timeCounter += 0.1; // Increment time by 100ms
+          
+          // Add new data points
+          _xData.add(FlSpot(_timeCounter, event.x));
+          _yData.add(FlSpot(_timeCounter, event.y));
+          _zData.add(FlSpot(_timeCounter, event.z));
+          
+          // Remove old data points to maintain performance
+          if (_xData.length > _maxDataPoints) {
+            _xData.removeAt(0);
+            _yData.removeAt(0);
+            _zData.removeAt(0);
+          }
         });
+        
         // Log accelerometer data to terminal
-        print('Accelerometer - X: ${event.x.toStringAsFixed(2)}, '
-              'Y: ${event.y.toStringAsFixed(2)}, '
-              'Z: ${event.z.toStringAsFixed(2)}');
+        // print('Accelerometer - X: ${event.x.toStringAsFixed(2)}, '
+        //       'Y: ${event.y.toStringAsFixed(2)}, '
+        //       'Z: ${event.z.toStringAsFixed(2)}');
       },
       onError: (error) {
         print('Accelerometer error: $error');
@@ -89,83 +93,319 @@ class _MyHomePageState extends State<MyHomePage> {
     );
   }
 
-  void _incrementCounter() {
-    setState(() {
-      // This call to setState tells the Flutter framework that something has
-      // changed in this State, which causes it to rerun the build method below
-      // so that the display can reflect the updated values. If we changed
-      // _counter without calling setState(), then the build method would not be
-      // called again, and so nothing would appear to happen.
-      _counter++;
-    });
+  Widget _buildChart(String title, List<FlSpot> data, Color color) {
+    return Container(
+      height: 120,
+      padding: const EdgeInsets.all(8),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            title,
+            style: const TextStyle(
+              fontSize: 14,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+          const SizedBox(height: 4),
+          Expanded(
+            child: LineChart(
+              LineChartData(
+                minX: data.isNotEmpty ? data.first.x : 0,
+                maxX: data.isNotEmpty ? data.last.x : 10,
+                minY: -20,
+                maxY: 20,
+                gridData: const FlGridData(show: false),
+                titlesData: const FlTitlesData(show: false),
+                borderData: FlBorderData(
+                  show: true,
+                  border: Border.all(color: Colors.grey.withOpacity(0.3)),
+                ),
+                lineBarsData: [
+                  LineChartBarData(
+                    spots: data,
+                    isCurved: true,
+                    color: color,
+                    barWidth: 2,
+                    isStrokeCapRound: true,
+                    dotData: const FlDotData(show: false),
+                    belowBarData: BarAreaData(
+                      show: true,
+                      color: color.withOpacity(0.1),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildReadingCard(String axis, double value, Color color) {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: color.withOpacity(0.1),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: color.withOpacity(0.3)),
+      ),
+      child: Column(
+        children: [
+          Text(
+            axis,
+            style: TextStyle(
+              fontSize: 16,
+              fontWeight: FontWeight.bold,
+              color: color,
+            ),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            value.toStringAsFixed(2),
+            style: const TextStyle(
+              fontSize: 24,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          const Text(
+            'm/s²',
+            style: TextStyle(
+              fontSize: 12,
+              color: Colors.grey,
+            ),
+          ),
+        ],
+      ),
+    );
   }
 
   @override
   Widget build(BuildContext context) {
-    // This method is rerun every time setState is called, for instance as done
-    // by the _incrementCounter method above.
-    //
-    // The Flutter framework has been optimized to make rerunning build methods
-    // fast, so that you can just rebuild anything that needs updating rather
-    // than having to individually change instances of widgets.
     return Scaffold(
+      backgroundColor: Colors.grey[50],
       appBar: AppBar(
-        // TRY THIS: Try changing the color here to a specific color (to
-        // Colors.amber, perhaps?) and trigger a hot reload to see the AppBar
-        // change color while the other colors stay the same.
-        backgroundColor: Theme.of(context).colorScheme.inversePrimary,
-        // Here we take the value from the MyHomePage object that was created by
-        // the App.build method, and use it to set our appbar title.
-        title: Text(widget.title),
-      ),
-      body: Center(
-        // Center is a layout widget. It takes a single child and positions it
-        // in the middle of the parent.
-        child: Column(
-          // Column is also a layout widget. It takes a list of children and
-          // arranges them vertically. By default, it sizes itself to fit its
-          // children horizontally, and tries to be as tall as its parent.
-          //
-          // Column has various properties to control how it sizes itself and
-          // how it positions its children. Here we use mainAxisAlignment to
-          // center the children vertically; the main axis here is the vertical
-          // axis because Columns are vertical (the cross axis would be
-          // horizontal).
-          //
-          // TRY THIS: Invoke "debug painting" (choose the "Toggle Debug Paint"
-          // action in the IDE, or press "p" in the console), to see the
-          // wireframe for each widget.
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: <Widget>[
-            const Text('You have pushed the button this many times:'),
-            Text(
-              '$_counter',
-              style: Theme.of(context).textTheme.headlineMedium,
-            ),
-            const SizedBox(height: 40),
-            const Text(
-              'Accelerometer Data:',
-              style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-            ),
-            const SizedBox(height: 10),
-            if (_accelerometerEvent != null)
-              Column(
-                children: [
-                  Text('X: ${_accelerometerEvent!.x.toStringAsFixed(2)}'),
-                  Text('Y: ${_accelerometerEvent!.y.toStringAsFixed(2)}'),
-                  Text('Z: ${_accelerometerEvent!.z.toStringAsFixed(2)}'),
-                ],
-              )
-            else
-              const Text('Waiting for accelerometer data...'),
-          ],
+        backgroundColor: Colors.blue[700],
+        foregroundColor: Colors.white,
+        title: const Text(
+          'Seismo Cardio App',
+          style: TextStyle(fontWeight: FontWeight.bold),
         ),
+        elevation: 4,
       ),
-      floatingActionButton: FloatingActionButton(
-        onPressed: _incrementCounter,
-        tooltip: 'Increment',
-        child: const Icon(Icons.add),
-      ), // This trailing comma makes auto-formatting nicer for build methods.
+      body: _currentEvent == null
+          ? const Center(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  CircularProgressIndicator(),
+                  SizedBox(height: 16),
+                  Text(
+                    'Waiting for accelerometer data...',
+                    style: TextStyle(fontSize: 16, color: Colors.grey),
+                  ),
+                ],
+              ),
+            )
+          : SingleChildScrollView(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  // Header
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(20),
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        colors: [Colors.blue[700]!, Colors.blue[500]!],
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                      ),
+                      borderRadius: BorderRadius.circular(16),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.blue.withOpacity(0.3),
+                          blurRadius: 8,
+                          offset: const Offset(0, 4),
+                        ),
+                      ],
+                    ),
+                    child: const Column(
+                      children: [
+                        Icon(
+                          Icons.sensors,
+                          size: 40,
+                          color: Colors.white,
+                        ),
+                        SizedBox(height: 8),
+                        Text(
+                          'Real-time Accelerometer',
+                          style: TextStyle(
+                            fontSize: 20,
+                            fontWeight: FontWeight.bold,
+                            color: Colors.white,
+                          ),
+                        ),
+                        Text(
+                          'Motion Sensing & Analysis',
+                          style: TextStyle(
+                            fontSize: 14,
+                            color: Colors.white70,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  
+                  const SizedBox(height: 24),
+                  
+                  // Current readings
+                  const Text(
+                    'Current Readings',
+                    style: TextStyle(
+                      fontSize: 18,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.black87,
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  
+                  Row(
+                    children: [
+                      Expanded(
+                        child: _buildReadingCard(
+                          'X-Axis',
+                          _currentEvent!.x,
+                          Colors.red[600]!,
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: _buildReadingCard(
+                          'Y-Axis',
+                          _currentEvent!.y,
+                          Colors.green[600]!,
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: _buildReadingCard(
+                          'Z-Axis',
+                          _currentEvent!.z,
+                          Colors.blue[600]!,
+                        ),
+                      ),
+                    ],
+                  ),
+                  
+                  const SizedBox(height: 24),
+                  
+                  // Charts section
+                  const Text(
+                    'Real-time Strip Charts',
+                    style: TextStyle(
+                      fontSize: 18,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.black87,
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  
+                  // X-axis chart
+                  Container(
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(12),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.grey.withOpacity(0.1),
+                          blurRadius: 4,
+                          offset: const Offset(0, 2),
+                        ),
+                      ],
+                    ),
+                    child: _buildChart('X-Axis Acceleration', _xData, Colors.red[600]!),
+                  ),
+                  
+                  const SizedBox(height: 16),
+                  
+                  // Y-axis chart
+                  Container(
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(12),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.grey.withOpacity(0.1),
+                          blurRadius: 4,
+                          offset: const Offset(0, 2),
+                        ),
+                      ],
+                    ),
+                    child: _buildChart('Y-Axis Acceleration', _yData, Colors.green[600]!),
+                  ),
+                  
+                  const SizedBox(height: 16),
+                  
+                  // Z-axis chart
+                  Container(
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(12),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.grey.withOpacity(0.1),
+                          blurRadius: 4,
+                          offset: const Offset(0, 2),
+                        ),
+                      ],
+                    ),
+                    child: _buildChart('Z-Axis Acceleration', _zData, Colors.blue[600]!),
+                  ),
+                  
+                  const SizedBox(height: 24),
+                  
+                  // Info card
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(16),
+                    decoration: BoxDecoration(
+                      color: Colors.amber[50],
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: Colors.amber[300]!),
+                    ),
+                    child: Column(
+                      children: [
+                        Icon(
+                          Icons.info_outline,
+                          color: Colors.amber[700],
+                          size: 28,
+                        ),
+                        const SizedBox(height: 8),
+                        Text(
+                          'Data Points: ${_xData.length}',
+                          style: TextStyle(
+                            fontSize: 14,
+                            fontWeight: FontWeight.bold,
+                            color: Colors.amber[700],
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          'Charts show the last $_maxDataPoints readings',
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: Colors.amber[600],
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
     );
   }
 }
