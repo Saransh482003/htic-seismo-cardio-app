@@ -27,7 +27,10 @@ class MyApp extends StatelessWidget {
         colorScheme: ColorScheme.fromSeed(seedColor: Colors.blue),
         useMaterial3: true,
       ),
-      home: const AccelerometerPage(),
+      initialRoute: '/',
+      routes: {
+        '/': (context) => const AccelerometerPage(),
+      },
     );
   }
 }
@@ -40,8 +43,9 @@ class AccelerometerPage extends StatefulWidget {
 }
 
 class _AccelerometerPageState extends State<AccelerometerPage> {
-  late StreamSubscription<AccelerometerEvent> _accelerometerSubscription;
+  StreamSubscription<AccelerometerEvent>? _accelerometerSubscription;
   AccelerometerEvent? _currentEvent;
+  bool _isReading = false; // Track if accelerometer is currently reading
   
   // Data storage for graphs
   final List<FlSpot> _xData = [];
@@ -54,16 +58,28 @@ class _AccelerometerPageState extends State<AccelerometerPage> {
   @override
   void initState() {
     super.initState();
-    _startAccelerometerListening();
+    // Initialize with default zero event for display
+    _currentEvent = AccelerometerEvent(0.0, 0.0, 0.0, DateTime.now());
   }
 
   @override
   void dispose() {
-    _accelerometerSubscription.cancel();
+    _accelerometerSubscription?.cancel();
     super.dispose();
   }
 
+  void _stopAccelerometerListening() {
+    _accelerometerSubscription?.cancel();
+    setState(() {
+      _isReading = false;
+    });
+  }
+
   void _startAccelerometerListening() {
+    setState(() {
+      _isReading = true;
+    });
+    
     _accelerometerSubscription = accelerometerEvents.listen(
       (AccelerometerEvent event) {
         setState(() {
@@ -90,6 +106,9 @@ class _AccelerometerPageState extends State<AccelerometerPage> {
       },
       onError: (error) {
         print('Accelerometer error: $error');
+        setState(() {
+          _isReading = false;
+        });
       },
     );
   }
@@ -214,7 +233,7 @@ class _AccelerometerPageState extends State<AccelerometerPage> {
                 lineBarsData: [
                   LineChartBarData(
                     spots: data,
-                    isCurved: true,
+                    isCurved: false,
                     color: color,
                     barWidth: 2.5, // Slightly thicker line for better visibility
                     isStrokeCapRound: true,
@@ -284,21 +303,7 @@ class _AccelerometerPageState extends State<AccelerometerPage> {
         ),
         elevation: 4,
       ),
-      body: _currentEvent == null
-          ? const Center(
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  CircularProgressIndicator(),
-                  SizedBox(height: 16),
-                  Text(
-                    'Waiting for accelerometer data...',
-                    style: TextStyle(fontSize: 16, color: Colors.grey),
-                  ),
-                ],
-              ),
-            )
-          : SingleChildScrollView(
+      body: SingleChildScrollView(
               padding: const EdgeInsets.all(16),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -515,6 +520,16 @@ class _AccelerometerPageState extends State<AccelerometerPage> {
                     ),
                   ),
                 ],
+              ),
+            ),
+      floatingActionButton: FloatingActionButton.extended(
+              onPressed: _isReading ? _stopAccelerometerListening : _startAccelerometerListening,
+              backgroundColor: _isReading ? Colors.red[600] : Colors.green[600],
+              foregroundColor: Colors.white,
+              icon: Icon(_isReading ? Icons.stop : Icons.play_arrow),
+              label: Text(
+                _isReading ? 'Stop Reading' : 'Start Reading',
+                style: const TextStyle(fontWeight: FontWeight.bold),
               ),
             ),
     );
