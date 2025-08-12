@@ -2,8 +2,11 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:sensors_plus/sensors_plus.dart';
 import 'package:fl_chart/fl_chart.dart';
+import 'package:http/http.dart' as http;
 import 'dart:async';
 import 'dart:math';
+import 'dart:convert';
+import 'package:scg_app/constants.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -44,6 +47,7 @@ class AccelerometerPage extends StatefulWidget {
 
 class _AccelerometerPageState extends State<AccelerometerPage> {
   StreamSubscription<AccelerometerEvent>? _accelerometerSubscription;
+  Timer? _postTimer; // Timer for POST requests every 5 seconds
   AccelerometerEvent? _currentEvent;
   bool _isReading = false; // Track if accelerometer is currently reading
   
@@ -52,8 +56,17 @@ class _AccelerometerPageState extends State<AccelerometerPage> {
   final List<FlSpot> _yData = [];
   final List<FlSpot> _zData = [];
   
+  // Data collection for 5-second intervals
+  final List<Map<String, dynamic>> _collectedData = []; // Store collected data for 5 seconds
+  
   double _timeCounter = 0;
   final int _maxDataPoints = 100; // Keep last 100 data points
+  
+  // API configuration
+  // static const String apiBaseUrl = 'http://127.0.0.1:5000'; // Change this to your backend URL
+  String _lastPostStatus = 'Not started';
+  int _postCount = 0;
+  int _currentBatchSize = 0; // Track current batch size
   
   @override
   void initState() {
@@ -65,28 +78,38 @@ class _AccelerometerPageState extends State<AccelerometerPage> {
   @override
   void dispose() {
     _accelerometerSubscription?.cancel();
+    _postTimer?.cancel(); // Cancel the POST timer
     super.dispose();
   }
 
   void _stopAccelerometerListening() {
     _accelerometerSubscription?.cancel();
+    _postTimer?.cancel(); // Stop the POST timer
     setState(() {
       _isReading = false;
+      _lastPostStatus = 'Stopped';
+      _collectedData.clear(); // Clear any remaining collected data
+      _currentBatchSize = 0;
     });
   }
 
   void _startAccelerometerListening() {
     setState(() {
       _isReading = true;
+      _lastPostStatus = 'Starting...';
+      _postCount = 0;
+      _collectedData.clear(); // Clear any previous data
+      _currentBatchSize = 0;
     });
     
+    // Start accelerometer listening
     _accelerometerSubscription = accelerometerEvents.listen(
       (AccelerometerEvent event) {
         setState(() {
           _currentEvent = event;
           _timeCounter += 0.1; // Increment time by 100ms
           
-          // Add new data points
+          // Add new data points for visualization
           _xData.add(FlSpot(_timeCounter, event.x));
           _yData.add(FlSpot(_timeCounter, event.y));
           _zData.add(FlSpot(_timeCounter, event.z));
@@ -97,20 +120,97 @@ class _AccelerometerPageState extends State<AccelerometerPage> {
             _yData.removeAt(0);
             _zData.removeAt(0);
           }
+          
+          // Collect data for 5-second batch sending
+          _collectedData.add({
+            'timestamp': DateTime.now().toIso8601String(),
+            'x': event.x,
+            'y': event.y,
+            'z': event.z,
+          });
+          _currentBatchSize = _collectedData.length;
         });
         
-        // Log accelerometer data to terminal
-        print('Accelerometer - X: ${event.x.toStringAsFixed(2)}, '
-              'Y: ${event.y.toStringAsFixed(2)}, '
-              'Z: ${event.z.toStringAsFixed(2)}');
+        // Log accelerometer data to terminal (optional, can be commented out for performance)
+        // print('Accelerometer - X: ${event.x.toStringAsFixed(2)}, '
+        //       'Y: ${event.y.toStringAsFixed(2)}, '
+        //       'Z: ${event.z.toStringAsFixed(2)}');
       },
       onError: (error) {
         print('Accelerometer error: $error');
         setState(() {
           _isReading = false;
+          _lastPostStatus = 'Error occurred';
         });
       },
     );
+    
+    // Start the separate timer for POST requests (this runs every 5 seconds)
+    _startPostTimer();
+  }
+
+  void _startPostTimer() {
+    _postTimer = Timer.periodic(const Duration(seconds: 5), (timer) {
+      if (_isReading && _currentEvent != null) {
+        _sendAccelerometerData();
+      }
+    });
+  }
+
+  Future<void> _sendAccelerometerData() async {
+    if (_collectedData.isEmpty) {
+      print('No data collected in this 5-second interval');
+      return;
+    }
+    
+    try {
+      // Create a copy of the collected data and clear the original list
+      final List<Map<String, dynamic>> dataToSend = List.from(_collectedData);
+      _collectedData.clear();
+      
+      // Prepare the data to send
+      final Map<String, dynamic> payload = {
+        'batch_timestamp': DateTime.now().toIso8601String(),
+        'batch_info': {
+          'post_count': _postCount + 1,
+          'data_points_in_batch': dataToSend.length,
+          'time_interval_seconds': 5,
+        },
+        'accelerometer_data': dataToSend, // List of dictionaries with timestamps
+      };
+
+      print('Sending POST request to $apiBaseUrl/accelerometer-data');
+      print('Batch size: ${dataToSend.length} data points');
+      // print('Data sample: ${json.encode(payload)}');
+
+      final response = await http.post(
+        Uri.parse('$apiBaseUrl/accelerometer-data'),
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: json.encode(payload),
+      ).timeout(const Duration(seconds: 10));
+
+      setState(() {
+        _postCount++;
+        _currentBatchSize = 0; // Reset batch size after sending
+        if (response.statusCode == 200 || response.statusCode == 201) {
+          _lastPostStatus = 'Success (${response.statusCode}) - Batch #$_postCount (${dataToSend.length} points)';
+          // print('POST request successful: ${response.body}');
+        } else {
+          _lastPostStatus = 'Failed (${response.statusCode}) - Batch #$_postCount';
+          print('POST request failed: ${response.statusCode} - ${response.body}');
+        }
+      });
+
+    } catch (e) {
+      setState(() {
+        _postCount++;
+        _currentBatchSize = 0;
+        _lastPostStatus = 'Error - Batch #$_postCount: $e';
+      });
+      print('Error sending POST request: $e');
+    }
   }
 
   // Calculate dynamic Y-axis range for better visibility of small fluctuations
@@ -290,6 +390,100 @@ class _AccelerometerPageState extends State<AccelerometerPage> {
     );
   }
 
+  Widget _buildApiStatusCard() {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: _isReading ? Colors.green[50] : Colors.grey[50],
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(
+          color: _isReading ? Colors.green[300]! : Colors.grey[300]!,
+        ),
+      ),
+      child: Column(
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(
+                _isReading ? Icons.cloud_upload : Icons.cloud_off,
+                color: _isReading ? Colors.green[700] : Colors.grey[600],
+                size: 24,
+              ),
+              const SizedBox(width: 8),
+              Text(
+                'API Status',
+                style: TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.bold,
+                  color: _isReading ? Colors.green[700] : Colors.grey[600],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Text(
+            _lastPostStatus,
+            style: TextStyle(
+              fontSize: 12,
+              color: _isReading ? Colors.green[600] : Colors.grey[600],
+            ),
+            textAlign: TextAlign.center,
+          ),
+          if (_isReading) ...[
+            const SizedBox(height: 8),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+              children: [
+                Column(
+                  children: [
+                    Text(
+                      'Batch Size',
+                      style: TextStyle(
+                        fontSize: 10,
+                        color: Colors.green[500],
+                        fontStyle: FontStyle.italic,
+                      ),
+                    ),
+                    Text(
+                      '$_currentBatchSize',
+                      style: TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.green[700],
+                      ),
+                    ),
+                  ],
+                ),
+                Column(
+                  children: [
+                    Text(
+                      'Batches Sent',
+                      style: TextStyle(
+                        fontSize: 10,
+                        color: Colors.green[500],
+                        fontStyle: FontStyle.italic,
+                      ),
+                    ),
+                    Text(
+                      '$_postCount',
+                      style: TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.green[700],
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -353,6 +547,11 @@ class _AccelerometerPageState extends State<AccelerometerPage> {
                       ],
                     ),
                   ),
+                  
+                  const SizedBox(height: 24),
+                  
+                  // API Status Card
+                  _buildApiStatusCard(),
                   
                   const SizedBox(height: 24),
                   
