@@ -1,5 +1,10 @@
+import 'dart:io';
+
+import 'package:csv/csv.dart';
 import 'package:flutter/material.dart';
 import 'services/data_storage.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:open_filex/open_filex.dart';
 
 class SavedReadingsPage extends StatefulWidget {
   const SavedReadingsPage({super.key});
@@ -371,6 +376,28 @@ class _SessionDetailsPageState extends State<SessionDetailsPage> {
     }
   }
 
+  Future<String> exportToCSV() async {
+    List<List<dynamic>> rows = [];
+    rows.add(["Timestamp", "X-Axis (m/s²)", "Y-Axis (m/s²)", "Z-Axis (m/s²)"]); 
+    for (var item in _readings) {
+      rows.add([_formatReadingTimestamp(item['timestamp']), item["x"], item["y"], item["z"]]);
+    }
+
+    String csvData = const ListToCsvConverter().convert(rows);
+
+    final directory = await getApplicationDocumentsDirectory();
+    DateTime now = DateTime.now();
+    final fileName = "exported_data_${now.year}-${now.month}-${now.day}_${now.hour}:${now.minute}:${now.second}.csv";
+    final path = "${directory.path}/$fileName";
+
+    // Write file
+    final file = File(path);
+    await file.writeAsString(csvData);
+
+    print("CSV file saved at: $path");
+    return path;
+  }
+
   String _formatTimestamp(String timestamp) {
     try {
       final dateTime = DateTime.parse(timestamp);
@@ -672,8 +699,72 @@ class _SessionDetailsPageState extends State<SessionDetailsPage> {
                     Expanded(
                       child: _buildDataTable(),
                     ),
+                    Padding(
+                      padding: const EdgeInsets.all(16.0),
+                      child: Container(
+                        width: double.infinity,
+                        height: 56,
+                        decoration: BoxDecoration(
+                          gradient: LinearGradient(
+                            colors: [Colors.green[600]!, Colors.green[700]!],
+                            begin: Alignment.centerLeft,
+                            end: Alignment.centerRight,
+                          ),
+                          borderRadius: BorderRadius.circular(12),
+                          boxShadow: [
+                            BoxShadow(
+                              color: Colors.green.withOpacity(0.3),
+                              blurRadius: 8,
+                              offset: const Offset(0, 4),
+                            ),
+                          ],
+                        ),
+                        child: ElevatedButton.icon(
+                          onPressed: () {
+                            exportToCSV().then((path) async {
+                              if (mounted) {
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  const SnackBar(
+                                    content: Text('Data exported successfully'),
+                                  ),
+                                );
+                                await OpenFilex.open(path);
+                              }
+                            }).catchError((e) {
+                              if (mounted) {
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  SnackBar(content: Text('Error exporting data: $e')),
+                                );
+                              }
+                            });
+                          },
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: Colors.transparent,
+                            shadowColor: Colors.transparent,
+                            foregroundColor: Colors.white,
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                            padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+                          ),
+                          icon: const Icon(
+                            Icons.download,
+                            size: 24,
+                          ),
+                          label: const Text(
+                            'Export to CSV',
+                            style: TextStyle(
+                              fontSize: 16,
+                              fontWeight: FontWeight.bold,
+                              letterSpacing: 0.5,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
                   ],
                 ),
+
     );
   }
 }
