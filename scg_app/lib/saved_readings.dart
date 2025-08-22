@@ -119,6 +119,23 @@ class _SavedReadingsPageState extends State<SavedReadingsPage> {
     }
   }
 
+  Future<String> _getSessionInfo(String sessionKey) async {
+    try {
+      final metadata = await SimpleStorageHelper.getSessionMetadata(sessionKey);
+      final fileSize = await SimpleStorageHelper.getBinaryFileSize(sessionKey);
+      
+      if (metadata != null) {
+        final readings = metadata['totalReadings'] ?? 0;
+        final sizeKB = (fileSize / 1024).toStringAsFixed(1);
+        return '$readings readings • ${sizeKB}KB binary';
+      }
+      
+      return 'Unknown size';
+    } catch (e) {
+      return 'Error loading info';
+    }
+  }
+
   Widget _buildSessionCard(String sessionKey, int index) {
     return Card(
       margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
@@ -140,12 +157,30 @@ class _SavedReadingsPageState extends State<SavedReadingsPage> {
             fontWeight: FontWeight.w600,
           ),
         ),
-        subtitle: Text(
-          'Session: $sessionKey',
-          style: TextStyle(
-            fontSize: 12,
-            color: Colors.grey[600],
-          ),
+        subtitle: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Session: $sessionKey',
+              style: TextStyle(
+                fontSize: 12,
+                color: Colors.grey[600],
+              ),
+            ),
+            FutureBuilder<String>(
+              future: _getSessionInfo(sessionKey),
+              builder: (context, snapshot) {
+                return Text(
+                  snapshot.data ?? 'Loading...',
+                  style: TextStyle(
+                    fontSize: 11,
+                    color: Colors.green[600],
+                    fontWeight: FontWeight.w500,
+                  ),
+                );
+              },
+            ),
+          ],
         ),
         trailing: PopupMenuButton<String>(
           onSelected: (value) async {
@@ -689,6 +724,17 @@ class _SessionDetailsPageState extends State<SessionDetailsPage> {
           if (_readings.isNotEmpty) ...[
             _buildInfoRow('Duration:', _calculateDuration()),
             _buildInfoRow('Sampling Rate:', _calculateSamplingRate()),
+            _buildInfoRow('Storage Format:', 'Binary (.bin + .meta)'),
+            FutureBuilder<int>(
+              future: SimpleStorageHelper.getBinaryFileSize(widget.sessionKey),
+              builder: (context, snapshot) {
+                if (snapshot.hasData) {
+                  final sizeKB = (snapshot.data! / 1024).toStringAsFixed(1);
+                  return _buildInfoRow('File Size:', '${sizeKB}KB');
+                }
+                return _buildInfoRow('File Size:', 'Loading...');
+              },
+            ),
           ],
         ],
       ),
