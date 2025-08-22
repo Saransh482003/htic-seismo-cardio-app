@@ -1,4 +1,6 @@
 import 'dart:io';
+import 'dart:typed_data';
+import 'dart:convert';
 
 import 'package:csv/csv.dart';
 import 'package:flutter/material.dart';
@@ -398,6 +400,107 @@ class _SessionDetailsPageState extends State<SessionDetailsPage> {
     return path;
   }
 
+  Future<String> exportToBinary() async {
+    final directory = await getApplicationDocumentsDirectory();
+    DateTime now = DateTime.now();
+    final fileName = "exported_data_${now.year}-${now.month}-${now.day}_${now.hour}:${now.minute}:${now.second}.bin";
+    final path = "${directory.path}/$fileName";
+
+    // Create binary data
+    final file = File(path);
+    final sink = file.openWrite();
+    
+    try {
+      // Write header information
+      final headerJson = {
+        'version': '1.0',
+        'sessionKey': widget.sessionKey,
+        'timestamp': _sessionTimestamp,
+        'totalReadings': _totalReadings,
+        'dataFormat': 'float64',
+        'columns': ['timestamp_ms', 'x', 'y', 'z']
+      };
+      
+      final headerString = json.encode(headerJson);
+      final headerBytes = utf8.encode(headerString);
+      final headerLength = headerBytes.length;
+      
+      // Write header length (4 bytes)
+      final headerLengthBytes = Uint8List(4);
+      headerLengthBytes.buffer.asUint32List()[0] = headerLength;
+      sink.add(headerLengthBytes);
+      
+      // Write header
+      sink.add(headerBytes);
+      
+      // Write readings data in binary format
+      for (var reading in _readings) {
+        // Convert timestamp to milliseconds since epoch
+        final timestamp = DateTime.parse(reading['timestamp']).millisecondsSinceEpoch;
+        final x = reading['x'] as double;
+        final y = reading['y'] as double;
+        final z = reading['z'] as double;
+        
+        // Create byte buffer for one reading (32 bytes total: 8 bytes each for timestamp, x, y, z)
+        final buffer = Uint8List(32);
+        final floatView = buffer.buffer.asFloat64List();
+        
+        floatView[0] = timestamp.toDouble();
+        floatView[1] = x;
+        floatView[2] = y;
+        floatView[3] = z;
+        
+        sink.add(buffer);
+      }
+      
+      await sink.close();
+      print("Binary file saved at: $path");
+      return path;
+      
+    } catch (e) {
+      await sink.close();
+      throw Exception('Error writing binary file: $e');
+    }
+  }
+
+  Future<String> exportToJSON() async {
+    final directory = await getApplicationDocumentsDirectory();
+    DateTime now = DateTime.now();
+    final fileName = "exported_data_${now.year}-${now.month}-${now.day}_${now.hour}:${now.minute}:${now.second}.json";
+    final path = "${directory.path}/$fileName";
+
+    // Create JSON structure
+    final jsonData = {
+      'metadata': {
+        'sessionKey': widget.sessionKey,
+        'exportTimestamp': now.toIso8601String(),
+        'originalTimestamp': _sessionTimestamp,
+        'totalReadings': _totalReadings,
+        'version': '1.0',
+        'units': {
+          'acceleration': 'm/s²',
+          'timestamp': 'ISO8601'
+        }
+      },
+      'readings': _readings.map((reading) => {
+        'timestamp': reading['timestamp'],
+        'accelerometer': {
+          'x': reading['x'],
+          'y': reading['y'],
+          'z': reading['z']
+        }
+      }).toList()
+    };
+
+    final jsonString = const JsonEncoder.withIndent('  ').convert(jsonData);
+    
+    final file = File(path);
+    await file.writeAsString(jsonString);
+
+    print("JSON file saved at: $path");
+    return path;
+  }
+
   String _formatTimestamp(String timestamp) {
     try {
       final dateTime = DateTime.parse(timestamp);
@@ -465,7 +568,7 @@ class _SessionDetailsPageState extends State<SessionDetailsPage> {
               child: SingleChildScrollView(
                 child: DataTable(
                   columnSpacing: 20,
-                  headingRowColor: MaterialStateColor.resolveWith(
+                  headingRowColor: WidgetStateColor.resolveWith(
                     (states) => Colors.grey[100]!,
                   ),
                   columns: const [
@@ -654,6 +757,246 @@ class _SessionDetailsPageState extends State<SessionDetailsPage> {
     return 'N/A';
   }
 
+  Future<void> _exportData(String format, {bool autoOpen = false}) async {
+    try {
+      String path;
+      String formatName;
+      
+      switch (format) {
+        case 'csv':
+          path = await exportToCSV();
+          formatName = 'CSV';
+          break;
+        case 'binary':
+          path = await exportToBinary();
+          formatName = 'Binary';
+          break;
+        case 'json':
+          path = await exportToJSON();
+          formatName = 'JSON';
+          break;
+        default:
+          throw Exception('Unknown export format: $format');
+      }
+      
+      // Auto-open file if requested (long press)
+      if (autoOpen) {
+        await _openFile(path);
+      }
+      
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(autoOpen 
+              ? '$formatName export completed and opened' 
+              : '$formatName export completed successfully'),
+            backgroundColor: Colors.green[600],
+            behavior: SnackBarBehavior.floating,
+            action: autoOpen ? null : SnackBarAction(
+              label: 'View',
+              textColor: Colors.white,
+              onPressed: () => _openFile(path),
+            ),
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Export failed: $e'),
+            backgroundColor: Colors.red[600],
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
+    }
+  }
+
+  Future<void> _openFile(String path) async {
+    try {
+      if (await File(path).exists()) {
+        print('Attempting to open file with OpenFilex: $path');
+        
+        final result = await OpenFilex.open(path);
+        
+        // Check if the file was opened successfully
+        if (result.type == ResultType.done) {
+          print('File opened successfully: $path');
+          
+          // Show success message
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: const Text('File opened successfully'),
+                backgroundColor: Colors.green[600],
+                behavior: SnackBarBehavior.floating,
+                duration: const Duration(seconds: 2),
+              ),
+            );
+          }
+        } else if (result.type == ResultType.noAppToOpen) {
+          print('No app available to open this file type');
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text('No app available to open this file type'),
+                backgroundColor: Colors.orange,
+                behavior: SnackBarBehavior.floating,
+              ),
+            );
+          }
+          _showFileLocationDialog(path);
+        } else if (result.type == ResultType.permissionDenied) {
+          print('Permission denied to open file');
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text('Permission denied to open file'),
+                backgroundColor: Colors.red,
+                behavior: SnackBarBehavior.floating,
+              ),
+            );
+          }
+          _showFileLocationDialog(path);
+        } else if (result.type == ResultType.error) {
+          print('Error opening file: ${result.message}');
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text('Error opening file: ${result.message}'),
+                backgroundColor: Colors.red,
+                behavior: SnackBarBehavior.floating,
+              ),
+            );
+          }
+          _showFileLocationDialog(path);
+        } else {
+          print('Unknown result type: ${result.type}');
+          _showFileLocationDialog(path);
+        }
+        
+      } else {
+        print('File does not exist: $path');
+        _showFileLocationDialog(path);
+      }
+    } catch (e) {
+      print('Exception opening file: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Failed to open file: $e'),
+            backgroundColor: Colors.red,
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
+      _showFileLocationDialog(path);
+    }
+  }
+
+  void _showFileLocationDialog(String path) {
+    if (mounted) {
+      showDialog(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Text('File Saved'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text('File saved to:'),
+              const SizedBox(height: 8),
+              Container(
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: Colors.grey[100],
+                  borderRadius: BorderRadius.circular(4),
+                ),
+                child: SelectableText(
+                  path,
+                  style: const TextStyle(fontSize: 12, fontFamily: 'monospace'),
+                ),
+              ),
+              const SizedBox(height: 12),
+              const Text(
+                'Unable to open file automatically. You can:',
+                style: TextStyle(fontSize: 14, fontWeight: FontWeight.w500),
+              ),
+              const SizedBox(height: 8),
+              const Text('• Copy the path above and navigate manually'),
+              const Text('• Use the "Open Folder" button below'),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('OK'),
+            ),
+            ElevatedButton.icon(
+              onPressed: () async {
+                Navigator.of(context).pop();
+                await _openContainingFolder(path);
+              },
+              icon: const Icon(Icons.folder_open),
+              label: const Text('Open Folder'),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.blue[600],
+                foregroundColor: Colors.white,
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+  }
+
+  Future<void> _openContainingFolder(String filePath) async {
+    try {
+      final directory = File(filePath).parent.path;
+      print('Opening containing folder: $directory');
+      
+      if (Platform.isWindows) {
+        // Open folder and select the file
+        final result = await Process.run('explorer', ['/select,', filePath], runInShell: true);
+        print('Explorer select result: ${result.exitCode}');
+        
+        if (result.exitCode != 0) {
+          // Fallback: just open the folder
+          await Process.run('explorer', [directory], runInShell: true);
+        }
+      } else if (Platform.isMacOS) {
+        // Open finder and select the file
+        await Process.run('open', ['-R', filePath]);
+      } else if (Platform.isLinux) {
+        // Open file manager to the directory
+        await Process.run('xdg-open', [directory]);
+      }
+      
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: const Text('Folder opened'),
+            backgroundColor: Colors.green[600],
+            behavior: SnackBarBehavior.floating,
+            duration: const Duration(seconds: 2),
+          ),
+        );
+      }
+    } catch (e) {
+      print('Error opening containing folder: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error opening folder: $e'),
+            backgroundColor: Colors.red[600],
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -699,67 +1042,171 @@ class _SessionDetailsPageState extends State<SessionDetailsPage> {
                     Expanded(
                       child: _buildDataTable(),
                     ),
-                    Padding(
-                      padding: const EdgeInsets.all(16.0),
-                      child: Container(
-                        width: double.infinity,
-                        height: 56,
-                        decoration: BoxDecoration(
-                          gradient: LinearGradient(
-                            colors: [Colors.green[600]!, Colors.green[700]!],
-                            begin: Alignment.centerLeft,
-                            end: Alignment.centerRight,
-                          ),
-                          borderRadius: BorderRadius.circular(12),
-                          boxShadow: [
-                            BoxShadow(
-                              color: Colors.green.withOpacity(0.3),
-                              blurRadius: 8,
-                              offset: const Offset(0, 4),
-                            ),
-                          ],
-                        ),
-                        child: ElevatedButton.icon(
-                          onPressed: () {
-                            exportToCSV().then((path) async {
-                              if (mounted) {
-                                ScaffoldMessenger.of(context).showSnackBar(
-                                  const SnackBar(
-                                    content: Text('Data exported successfully'),
-                                  ),
-                                );
-                                await OpenFilex.open(path);
-                              }
-                            }).catchError((e) {
-                              if (mounted) {
-                                ScaffoldMessenger.of(context).showSnackBar(
-                                  SnackBar(content: Text('Error exporting data: $e')),
-                                );
-                              }
-                            });
-                          },
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: Colors.transparent,
-                            shadowColor: Colors.transparent,
-                            foregroundColor: Colors.white,
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(12),
-                            ),
-                            padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
-                          ),
-                          icon: const Icon(
-                            Icons.download,
-                            size: 24,
-                          ),
-                          label: const Text(
-                            'Export to CSV',
+                    // Export buttons section
+                    Container(
+                      padding: const EdgeInsets.all(16),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          Text(
+                            'Export Options',
                             style: TextStyle(
                               fontSize: 16,
                               fontWeight: FontWeight.bold,
-                              letterSpacing: 0.5,
+                              color: Colors.grey[700],
                             ),
+                            textAlign: TextAlign.center,
                           ),
-                        ),
+                          const SizedBox(height: 4),
+                          Text(
+                            'Tap to export • Long press to export & open',
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: Colors.grey[500],
+                              fontStyle: FontStyle.italic,
+                            ),
+                            textAlign: TextAlign.center,
+                          ),
+                          const SizedBox(height: 12),
+                          Row(
+                            children: [
+                              // CSV Export Button
+                              Expanded(
+                                child: GestureDetector(
+                                  onTap: () => _exportData('csv'),
+                                  onLongPress: () => _exportData('csv', autoOpen: true),
+                                  child: Container(
+                                    height: 50,
+                                    decoration: BoxDecoration(
+                                      gradient: LinearGradient(
+                                        colors: [Colors.green[600]!, Colors.green[700]!],
+                                        begin: Alignment.centerLeft,
+                                        end: Alignment.centerRight,
+                                      ),
+                                      borderRadius: BorderRadius.circular(8),
+                                      boxShadow: [
+                                        BoxShadow(
+                                          color: Colors.green.withOpacity(0.3),
+                                          blurRadius: 4,
+                                          offset: const Offset(0, 2),
+                                        ),
+                                      ],
+                                    ),
+                                    child: Row(
+                                      mainAxisAlignment: MainAxisAlignment.center,
+                                      children: [
+                                        Icon(
+                                          Icons.table_chart,
+                                          size: 18,
+                                          color: Colors.white,
+                                        ),
+                                        const SizedBox(width: 6),
+                                        const Text(
+                                          'CSV',
+                                          style: TextStyle(
+                                            fontSize: 14,
+                                            fontWeight: FontWeight.bold,
+                                            color: Colors.white,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              // Binary Export Button
+                              Expanded(
+                                child: GestureDetector(
+                                  onTap: () => _exportData('binary'),
+                                  onLongPress: () => _exportData('binary', autoOpen: true),
+                                  child: Container(
+                                    height: 50,
+                                    decoration: BoxDecoration(
+                                      gradient: LinearGradient(
+                                        colors: [Colors.grey[800]!, Colors.black],
+                                        begin: Alignment.centerLeft,
+                                        end: Alignment.centerRight,
+                                      ),
+                                      borderRadius: BorderRadius.circular(8),
+                                      boxShadow: [
+                                        BoxShadow(
+                                          color: Colors.black.withOpacity(0.3),
+                                          blurRadius: 4,
+                                          offset: const Offset(0, 2),
+                                        ),
+                                      ],
+                                    ),
+                                    child: Row(
+                                      mainAxisAlignment: MainAxisAlignment.center,
+                                      children: [
+                                        Icon(
+                                          Icons.memory,
+                                          size: 18,
+                                          color: Colors.white,
+                                        ),
+                                        const SizedBox(width: 6),
+                                        const Text(
+                                          'Binary',
+                                          style: TextStyle(
+                                            fontSize: 14,
+                                            fontWeight: FontWeight.bold,
+                                            color: Colors.white,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              // JSON Export Button
+                              Expanded(
+                                child: GestureDetector(
+                                  onTap: () => _exportData('json'),
+                                  onLongPress: () => _exportData('json', autoOpen: true),
+                                  child: Container(
+                                    height: 50,
+                                    decoration: BoxDecoration(
+                                      gradient: LinearGradient(
+                                        colors: [Colors.blue[600]!, Colors.blue[700]!],
+                                        begin: Alignment.centerLeft,
+                                        end: Alignment.centerRight,
+                                      ),
+                                      borderRadius: BorderRadius.circular(8),
+                                      boxShadow: [
+                                        BoxShadow(
+                                          color: Colors.blue.withOpacity(0.3),
+                                          blurRadius: 4,
+                                          offset: const Offset(0, 2),
+                                        ),
+                                      ],
+                                    ),
+                                    child: Row(
+                                      mainAxisAlignment: MainAxisAlignment.center,
+                                      children: [
+                                        Icon(
+                                          Icons.code,
+                                          size: 18,
+                                          color: Colors.white,
+                                        ),
+                                        const SizedBox(width: 6),
+                                        const Text(
+                                          'JSON',
+                                          style: TextStyle(
+                                            fontSize: 14,
+                                            fontWeight: FontWeight.bold,
+                                            color: Colors.white,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ],
                       ),
                     ),
                   ],

@@ -6,8 +6,6 @@ import 'package:fl_chart/fl_chart.dart';
 // import 'package:http/http.dart' as http;
 import 'dart:async';
 import 'dart:math';
-import 'dart:convert';
-import 'package:scg_app/constants.dart';
 // Add this import
 import 'services/data_storage.dart';
 import 'saved_readings.dart';
